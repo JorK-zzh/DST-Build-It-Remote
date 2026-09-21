@@ -36,10 +36,6 @@ local c = { r = .5, g = 0, b = 0 }
 -- highlit 用纯数组，方便整表替换
 local highlit = {}
 
--- net_string 实际可携带的长度有限（引擎侧长度前缀），超出会被截断
--- 截断后客户端解析出的数量是错的，会造成 "UI 显示够、其实不够"
-local NET_STRING_MAX = 240
-
 local FIND_MUST_TAGS = { "_container" }
 local FIND_CANT_TAGS = { "NOBLOCK", "player", "FX" }
 
@@ -126,12 +122,14 @@ local function GetSurroundingContainers(inst)
 
     local now = GetTime()
     local entry = cache[inst]
+    local x, y, z = inst.Transform:GetWorldPosition()
 
-    if entry ~= nil and entry.chests ~= nil and now - entry.chests_t < REFRESH_TIME then
+    -- 移动后不能沿用原位置的箱子列表，尤其不能缓存“附近没有箱子”。
+    if entry ~= nil and entry.chests ~= nil and now - entry.chests_t < REFRESH_TIME
+        and entry.x == x and entry.z == z then
         return entry.chests
     end
 
-    local x, y, z = inst.Transform:GetWorldPosition()
     local ents = TheSim:FindEntities(x, y, z, MAX_SEARCH_RANGE, FIND_MUST_TAGS, FIND_CANT_TAGS)
 
     local chests = {}
@@ -150,6 +148,7 @@ local function GetSurroundingContainers(inst)
     end
     entry.chests = chests
     entry.chests_t = now
+    entry.x, entry.z = x, z
     entry.counts = nil
     entry.counts_t = nil
 
@@ -183,7 +182,7 @@ end
 
 -- 客户端：取出 container_replica
 local function GetChestContainerReplica(chest)
-    if chest == nil or not chest:IsValid() or chest.replica == nil then
+    if chest == nil or not chest:IsValid() or not chest.entity:IsVisible() or chest.replica == nil then
         return nil
     end
     local container = chest.replica.container
@@ -194,6 +193,76 @@ local function GetChestContainerReplica(chest)
         return nil
     end
     return container
+end
+
+-- 制作栏关闭时固定栏也需要更新。只在附近材料总量变化时发送原生事件，
+-- 让“降低客户端卡顿”等 UI 优化模组继续自行决定重算哪些配方。
+local function RefreshNearbyCrafting(player)
+    if player ~= _G.ThePlayer or not player:IsValid() or player.HUD == nil then
+        return
+    end
+
+    local counts = {}
+    local chests = GetSurroundingContainers(player)
+    for i = 1, #chests do
+        local chest = chests[i]
+        local container = GetChestContainer(chest)
+        if container ~= nil then
+            for _, item in pairs(container.slots or container.itemslots or EMPTY_TABLE) do
+                if item ~= nil and item.prefab ~= nil and item:IsValid() and not item:HasTag("nocrafting") then
+                    counts[item.prefab] = (counts[item.prefab] or 0) + Count(item)
+                end
+            end
+        elseif GetChestContainerReplica(chest) ~= nil then
+            for prefab, n in pairs(chest.buffered_items or EMPTY_TABLE) do
+                counts[prefab] = (counts[prefab] or 0) + n
+            end
+        end
+    end
+
+    local entry = cache[player]
+    if entry == nil then
+        return
+    end
+    local previous = entry.refresh_counts or EMPTY_TABLE
+    local changed = false
+    for prefab, n in pairs(counts) do
+        if previous[prefab] ~= n then changed = true; break end
+    end
+    if not changed then
+        for prefab, n in pairs(previous) do
+            if counts[prefab] ~= n then changed = true; break end
+        end
+    end
+    entry.refresh_counts = counts
+    if changed then
+        InvalidateCounts(player)
+        player:PushEvent("refreshcrafting")
+    end
+end
+
+local function QueueNearbyCraftingRefresh(chest)
+    local player = _G.ThePlayer
+    if player == nil or not player:IsValid() or player.Transform == nil then
+        return
+    end
+    local x, _, z = player.Transform:GetWorldPosition()
+    local cx, _, cz = chest.Transform:GetWorldPosition()
+    if (cx - x)^2 + (cz - z)^2 > MAX_SEARCH_RANGE^2 then
+        return
+    end
+    -- 新加载的箱子可能尚未在列表中；同帧内的后续材料查询也必须读到新数据。
+    local entry = cache[player]
+    if entry ~= nil then
+        entry.chests = nil
+        InvalidateCounts(player)
+    end
+    if player._birt_refresh_task == nil then
+        player._birt_refresh_task = player:DoTaskInTime(0, function(inst)
+            inst._birt_refresh_task = nil
+            RefreshNearbyCrafting(inst)
+        end)
+    end
 end
 
 -- 遍历周围箱子时统一的跳过规则：
@@ -561,18 +630,16 @@ local function BuildContainerString(container)
         end
     end
 
+    -- net_string 是变长字符串。旧版自行限制 240 字节会直接丢弃后续材料。
+    -- 排序保证同一份物品统计总是生成相同快照，避免 pairs 顺序引起重复同步。
+    local keys = {}
+    for prefab in pairs(counts) do
+        keys[#keys + 1] = prefab
+    end
+    table.sort(keys)
     local parts = {}
-    local n = 0
-    local len = 0
-    for k, v in pairs(counts) do
-        local piece = k .. " " .. v
-        -- 超长会被引擎截断，截断后客户端解析出的数量是错的，宁可少报
-        if len + #piece + 1 > NET_STRING_MAX then
-            break
-        end
-        n = n + 1
-        parts[n] = piece
-        len = len + #piece + 1
+    for i, prefab in ipairs(keys) do
+        parts[i] = prefab .. " " .. counts[prefab]
     end
 
     return table.concat(parts, " ")
@@ -589,7 +656,8 @@ local function DoUpdateContainer(inst)
     local container = inst.components ~= nil and inst.components.container or nil
     local result = ""
 
-    if container ~= nil and container.slots ~= nil and not container:IsEmpty() then
+    if container ~= nil and not container.excludefromcrafting and not container.readonlycontainer
+        and container.slots ~= nil and not container:IsEmpty() then
         result = BuildContainerString(container)
     end
 
@@ -597,6 +665,7 @@ local function DoUpdateContainer(inst)
     if inst._birt_last ~= result then
         inst._birt_last = result
         inst._item_str:set(result)
+        QueueNearbyCraftingRefresh(inst)
         debug_print("UpdateContainerAll: " .. result)
     end
 end
@@ -623,6 +692,7 @@ local function OnContainerDirty(inst)
         buffered[k] = (buffered[k] or 0) + (tonumber(v) or 0)
     end
     inst.buffered_items = buffered
+    QueueNearbyCraftingRefresh(inst)
 end
 
 AddClassPostConstruct("components/container_replica", function(self)
@@ -683,27 +753,14 @@ AddClassPostConstruct("components/container_replica", function(self)
 end)
 
 -----------------------------------------------------------------
--- 定期刷新合成菜单
---
--- 原实现是 DoPeriodicTask(1.0, ...)，且条件写成 `inst == ThePlayer`，
--- 而 ThePlayer 是在 modmain 顶层取的（那时还是 nil），所以这个任务
--- 其实从未真正建立。这里按 REFRESH_TIME 刷新，并且只在合成菜单
--- 打开时才推事件 —— refreshcrafting 会让菜单对全部配方重算
--- HasIngredients，是很贵的操作，不能无条件每秒来一次。
+-- 轮询只比较附近材料快照，补足移动 / 箱子销毁等没有网络 dirty 的变化。
+-- 主机和远程客户端都运行；不因菜单关闭而停用，也不无条件重算全部配方。
 -----------------------------------------------------------------
 AddPlayerPostInit(function(inst)
-    if not IsClient or inst.__birt_refresh then
+    if IsDedicated or inst.__birt_refresh then
         return
     end
     inst.__birt_refresh = true
 
-    inst:DoPeriodicTask(math.max(1, REFRESH_TIME), function(player)
-        if player ~= _G.ThePlayer or not player:IsValid() then
-            return
-        end
-        if player.HUD == nil or not player.HUD:IsCraftingOpen() then
-            return
-        end
-        player:PushEvent("refreshcrafting")
-    end)
+    inst:DoPeriodicTask(math.min(1, REFRESH_TIME), RefreshNearbyCrafting)
 end)

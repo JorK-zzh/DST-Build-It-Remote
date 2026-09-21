@@ -2,7 +2,7 @@ local L = locale ~= "zh" and locale ~= "zhr" -- true 英文  false 中文
 local Loc = function(eng, chi) return L and eng or chi end
 
 
-version = '1.3.17'
+version = '1.3.18'
 local log = {
     Loc("v1.3.7 Update: Reduce network bandwidth consumption and server performance consumption.","v1.3.7 更新：减少了网络带宽的占用和服务器的性能消耗。"),
     Loc("v1.3.8 Update: Solve server lag problem by introducing cache.","v1.3.8 更新：通过引入缓存来解决服务器卡顿问题。"),
@@ -29,6 +29,8 @@ local log = {
         "        - 合成菜单的材料查询改为按帧聚合缓存（实测快约 50 倍）。"),
     Loc("        - Container sync is now coalesced per frame and skipped when unchanged; string length is capped to avoid truncation.",
         "        - 容器同步改为每帧合并、内容未变则不发送，并限制长度避免网络字符串被截断。"),
+    Loc("v1.3.18 Update: Fixed incomplete chest material sync and stale crafting status; nearby material changes now refresh pinned recipes with the crafting menu closed.",
+        "v1.3.18 更新：修复箱子材料同步不完整、制作状态不刷新的问题；关闭制作菜单时，附近材料变化也会更新固定栏。"),
 }
 
 local function updateLog()

@@ -73,6 +73,7 @@ local function make_net_string(g, name, ev)
 end
 
 GLOBAL = {
+    setmetatable = setmetatable,
     tonumber = tonumber, tostring = tostring, type = type, pairs = pairs, ipairs = ipairs,
     math = math, table = table, string = string, GetTime = GetTime, require = _require,
     AllRecipes = {}, ThePlayer = nil,

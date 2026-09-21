@@ -1,5 +1,5 @@
 import sys, os
-from lupa import LuaRuntime
+from lupa.lua51 import LuaRuntime
 
 root = os.path.dirname(os.path.abspath(__file__))
 proj = os.path.dirname(root)
@@ -7,7 +7,7 @@ script = os.path.join(root, sys.argv[1]).replace("\\", "/")
 target = sys.argv[2]
 
 L = LuaRuntime(unpack_returned_tuples=True)
-L.execute("arg = {...}", target)
+L.execute("arg = {...}", target, *sys.argv[3:])
 src = open(script, encoding="utf-8").read().replace("os.exit(", "EXITCODE=(")
 try:
     L.execute(src)
