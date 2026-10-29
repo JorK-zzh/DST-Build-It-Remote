@@ -136,7 +136,10 @@ local function GetSurroundingContainers(inst)
     local n = 0
     for i = 1, #ents do
         local v = ents[i]
-        if v:IsValid() and v.entity:IsVisible() and v.replica ~= nil and v.replica.container ~= nil then
+        -- 口袋维度容器（shadow_container 等）不支持作为材料源：它固定停在 (0,0,0)，
+        -- 打开暗影切斯特时若被当成附近箱子，会直接消耗全队共享的暗影存储。
+        if v:IsValid() and v.entity:IsVisible() and not v:HasTag("pocketdimension_container")
+            and v.replica ~= nil and v.replica.container ~= nil then
             n = n + 1
             chests[n] = v
         end
@@ -244,6 +247,10 @@ end
 local function QueueNearbyCraftingRefresh(chest)
     local player = _G.ThePlayer
     if player == nil or not player:IsValid() or player.Transform == nil then
+        return
+    end
+    -- 口袋维度容器（shadow_container）的客户端副本没有 Transform，不能假设容器实体一定有世界坐标。
+    if chest == nil or not chest:IsValid() or chest.Transform == nil then
         return
     end
     local x, _, z = player.Transform:GetWorldPosition()
@@ -701,6 +708,13 @@ AddClassPostConstruct("components/container_replica", function(self)
     end
 
     local inst = self.inst
+
+    -- 口袋维度容器（暗影切斯特 / 魔术箱 / 魔术帽共享的 shadow_container）不支持量子建造：
+    -- 它没有世界坐标（客户端连 Transform 都没有），也不是普通箱子。整段跳过，
+    -- 既不挂网络串也不覆盖 Has，避免崩溃和读到共享的暗影存储。
+    if inst:HasTag("pocketdimension_container") then
+        return
+    end
 
     -- netvar 必须在服务端和客户端上以完全一致的方式声明，不能条件性创建
     if _G.net_string then

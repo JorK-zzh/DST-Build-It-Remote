@@ -707,5 +707,20 @@ do
     check("S10 幽灵箱子不能白嫖合成", not allowed, "allowed=" .. tostring(allowed))
 end
 
+-- 场景 11：口袋维度容器（暗影切斯特 / 魔术箱共享的 shadow_container）显式不支持。
+--         它固定在世界坐标 (0,0,0)，若被当成附近箱子就会消耗全队共享的暗影存储。
+do
+    reset()
+    local p = MakePlayer()
+    local chest = MakeChest("shadow_container")
+    chest:AddTag("pocketdimension_container")
+    chest.components.container:GiveItem(MakeItem("nightmarefuel", 20))
+    local has, n = p.components.inventory:Has("nightmarefuel", 4, true)
+    check("S11 暗影存储不算材料", (not has) and n == 0,
+        "has=" .. tostring(has) .. " n=" .. tostring(n))
+    local ok, why = craft(p, { ingredients = { { type = "nightmarefuel", amount = 4 } } })
+    check("S11 不能从暗影存储取料", ok == false, tostring(why))
+end
+
 print(string.format("\n结果: %d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)
