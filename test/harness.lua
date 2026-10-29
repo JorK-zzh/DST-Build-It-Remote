@@ -722,5 +722,23 @@ do
     check("S11 不能从暗影存储取料", ok == false, tostring(why))
 end
 
+-- 场景 12：打开着的容器（如暗影容器）里的数量不能“覆盖”附近箱子。
+--         Has 返回的 num_found 必须是「打开容器 + 附近箱子」的总量，否则制作栏显示偏少。
+do
+    reset()
+    local p = MakePlayer()
+    local opened = MakeChest()
+    opened.components.container:GiveItem(MakeItem("twigs", 2))
+    p.components.inventory.opencontainers[opened] = true   -- 玩家正打开着它
+    local nearby = MakeChest()
+    nearby.components.container:GiveItem(MakeItem("twigs", 10))
+    nearby.components.container:GiveItem(MakeItem("rocks", 2))
+
+    local has, n = p.components.inventory:Has("twigs", 2, true)
+    check("S12 打开容器时仍显示附近总量(树枝)", has and n == 12, "n=" .. tostring(n))
+    local has2, n2 = p.components.inventory:Has("rocks", 2, true)
+    check("S12 打开容器时仍显示附近总量(石头)", has2 and n2 == 2, "n=" .. tostring(n2))
+end
+
 print(string.format("\n结果: %d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)

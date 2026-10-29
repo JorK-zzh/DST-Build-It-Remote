@@ -2,7 +2,7 @@ local L = locale ~= "zh" and locale ~= "zhr" -- true 英文  false 中文
 local Loc = function(eng, chi) return L and eng or chi end
 
 
-version = '1.3.19'
+version = '1.3.20'
 local log = {
     Loc("v1.3.7 Update: Reduce network bandwidth consumption and server performance consumption.","v1.3.7 更新：减少了网络带宽的占用和服务器的性能消耗。"),
     Loc("v1.3.8 Update: Solve server lag problem by introducing cache.","v1.3.8 更新：通过引入缓存来解决服务器卡顿问题。"),
@@ -33,6 +33,8 @@ local log = {
         "v1.3.18 更新：修复箱子材料同步不完整、制作状态不刷新的问题；关闭制作菜单时，附近材料变化也会更新固定栏。"),
     Loc("v1.3.19 Update: Fixed a crash when putting items into shadow storage containers (Shadow Chester, Magician's Chest, Magician's Top Hat). Only the crash is fixed: shadow dimension storage is not counted as nearby crafting material (even at coordinates (0,0,0)).",
         "v1.3.19 更新：修复往暗影存储容器（暗影切斯特、魔术箱、魔术帽）中放物品时闪退的问题；仅修复崩溃，暗影维度存储不被计为附近的合成材料（即使你在坐标 (0,0,0)）"),
+    Loc("v1.3.20 Update: Fixed the crafting UI showing only the opened container's material count instead of the total with nearby chests.",
+        "v1.3.20 更新：修复打开容器（如暗影容器）时，制作栏材料数量只显示打开容器、没算上附近箱子的问题。"),
 }
 
 local function updateLog()

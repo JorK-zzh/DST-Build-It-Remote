@@ -302,7 +302,12 @@ local function GetSurroundingCounts(inventory)
     local counts = {}
     local overflow = inventory:GetOverflowContainer()
     local overflow_inst = overflow ~= nil and overflow.inst or nil
+    -- 服务端 Inventory 用 opencontainers 字段；客户端 Inventory_Replica 只有 GetOpenContainers()。
+    -- 两端的 Has 都靠这里跳过「打开着的容器」，因为它们已由原版统计，不能再算一遍。
     local opencontainers = inventory.opencontainers
+    if opencontainers == nil and inventory.GetOpenContainers ~= nil then
+        opencontainers = inventory:GetOpenContainers()
+    end
 
     for i = 1, #chests do
         local chest = chests[i]
@@ -317,6 +322,11 @@ local function GetSurroundingCounts(inventory)
                             counts[v.prefab] = (counts[v.prefab] or 0) + Count(v)
                         end
                     end
+                end
+            elseif GetChestContainerReplica(chest) ~= nil then
+                -- 客户端：未打开的箱子读服务端广播的快照
+                for prefab, n in pairs(chest.buffered_items or EMPTY_TABLE) do
+                    counts[prefab] = (counts[prefab] or 0) + n
                 end
             end
         end
@@ -385,7 +395,10 @@ do
         self.Has = function(self, item, amount, checkallcontainers)
             local has_enough, num_found = oldHas(self, item, amount, checkallcontainers)
 
-            if has_enough or not checkallcontainers then
+            -- 不能因为「手上 + 已打开容器已够」就提前返回：那样 num_found 只含打开容器，
+            -- 制作栏显示的数量会被打开容器“覆盖”（附近箱子里的不计入）。
+            -- GetSurroundingCounts 按 tick 缓存，这里只是 O(1) 查表，不会变慢。
+            if not checkallcontainers then
                 return has_enough, num_found
             end
 
@@ -525,29 +538,16 @@ do
                 return has_enough, num_found
             end
 
-            if has_enough or not checkallcontainers then
+            -- 不能因为 oldHas 已够就提前返回：那会让 num_found 只含打开容器，
+            -- 制作栏显示的数量被打开容器“覆盖”，附近箱子的不计入。
+            -- 这里复用按 tick 聚合缓存，避免每次调用都逐箱子遍历。
+            if not checkallcontainers then
                 return has_enough, num_found
             end
 
-            local chests = GetSurroundingContainers(self.inst)
-            local overflow = self:GetOverflowContainer()
-            local overflow_inst = overflow ~= nil and overflow.inst or nil
-            -- Inventory_Replica 没有 opencontainers 字段，只有 GetOpenContainers()。
-            -- 原实现读 self.opencontainers 恒为 nil，等于从不跳过已打开的箱子 → 双重计数。
-            local opencontainers = self.GetOpenContainers ~= nil and self:GetOpenContainers() or nil
+            local counts = GetSurroundingCounts(self)
+            num_found = num_found + (counts[prefab] or 0)
 
-            for i = 1, #chests do
-                local chest = chests[i]
-                if not ShouldSkipChest(chest, opencontainers, overflow_inst) then
-                    local container = GetChestContainerReplica(chest)
-                    if container ~= nil and container ~= overflow then
-                        local container_enough, container_found = container:Has(prefab, amount, true)
-                        num_found = num_found + (tonumber(container_found) or 0)
-                    end
-                end
-            end
-
-            debug_print("Inventory Has: " .. tostring(prefab) .. " " .. num_found .. "/" .. tostring(amount))
             return num_found >= amount, num_found
         end
 
